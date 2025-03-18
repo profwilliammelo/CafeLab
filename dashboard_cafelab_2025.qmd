@@ -1,0 +1,561 @@
+---
+title: "CAfe.Lab - Monitoramento de Desempenho Escolar"
+author: "Seu Nome"
+format:
+  dashboard:
+    theme: united
+    logo: "images/quarto-logo.png"  # Ajuste o caminho, se necessário
+    nav-buttons: [linkedin, twitter, github]
+    scrolling: true
+    orientation: rows
+server: shiny
+---
+
+## {.sidebar}
+
+```{r sidebar-ui, echo=FALSE}
+# Painel de Análises Agregadas
+h3("Análise Agregada")
+selectInput(
+  inputId = "turma_agregado",
+  label   = "Selecione a Turma (Agregado)",
+  choices = "Todas"
+)
+selectInput(
+  inputId = "atividade_agregado",
+  label   = "Selecione a Atividade (Agregado)",
+  choices = "Todas"
+)
+selectInput(
+  inputId = "criterio_color",
+  label   = "Colorir por (característica social):",
+  choices = c(
+    "Nenhum", 
+    "genero", 
+    "cor", 
+    "mora_com_quem",
+    "lugar_tranquilo_estudo", 
+    "tristeza_com_frequencia",
+    "ansiedade_preocupacao_com_frequencia",
+    "alegria_felicidade_com_frequencia", 
+    "recursos_casa"
+  ),
+  selected = "Nenhum"
+)
+
+hr()
+
+# Painel de Análises Individuais
+h3("Análise Individual")
+selectInput(
+  inputId = "turma_individual",
+  label   = "Selecione a Turma (Individual)",
+  choices = "Todas"
+)
+selectInput(
+  inputId = "nome_estudante",
+  label   = "Selecione o Aluno",
+  choices = NULL
+)
+selectInput(
+  inputId = "atividade_individual",
+  label   = "Selecione a Atividade (Individual)",
+  choices = "Todos"
+)
+actionButton(
+  inputId = "atualizar",
+  label   = "Atualizar Dados"
+)
+```
+
+```{r setup, include=FALSE}
+# Bibliotecas principais
+library(shiny)
+library(tidyverse)
+library(DT)
+library(httr)
+library(stringr)  # Necessário para usar str_trim
+```
+
+```{r server}
+#| context: server
+
+# -----------------------------------------------------------------------------
+# SERVIDOR - Código atualizado
+# -----------------------------------------------------------------------------
+
+# Carrega as bibliotecas necessárias
+library(shiny)
+library(tidyverse)
+library(DT)
+library(rlang)         # Para manipular estéticas dinâmicas (ex: sym)
+library(stringr)       # Para limpeza dos nomes das colunas
+library(googlesheets4) # Para ler dados diretamente das planilhas do Google
+
+gs4_auth(path = "rwilliammelo-70207e3cde8b.json")
+
+# -----------------------------------------------------------------------------
+# 1) Definindo os IDs das planilhas do Google Sheets
+#    (Os rótulos à esquerda servem apenas para identificar cada planilha)
+# -----------------------------------------------------------------------------
+sheet_ids <- c(
+  "711" = "1HMjzbAKyDCvJh9CO8T2isGA04EjVoHlCgnzgu-s1mh0",
+  "712" = "1b_39FjRINpB6ybTrHZ1-j41CBzHqYIOozx_4RtUY9bY",
+  "713" = "17u8yE9tIieA7VsojilEJXANirXjKceF80y3AXzBXORo",
+  "621" = "16s2R-poDNNnd2SMwuq5HIsRmD8ax1J4nI2AABi-bCs4",
+  "624" = "1Q0yiIRIgsnLAytPVRtwe8_-RbRILRb2-HUEsztc89Rk"
+)
+
+# -----------------------------------------------------------------------------
+# 2) Lista de colunas de metadados (para conversão em texto, se aplicável)
+#    Adicionamos "nome_estudante" para possibilitar o filtro individual.
+# -----------------------------------------------------------------------------
+colunas_metadados <- c(
+  "turma", "data_matricula", "situ_matricula", "pcd_transtornos", 
+  "obs", "serie", "genero", "cor", "mora_com_quem", 
+  "lugar_tranquilo_estudo", "tristeza_com_frequencia", 
+  "ansiedade_preocupacao_com_frequencia", "alegria_felicidade_com_frequencia",
+  "recursos_casa", "nome_estudante"
+)
+
+# -----------------------------------------------------------------------------
+# 3) Função para ler uma única planilha usando googlesheets4
+#    - Lê os dados e converte os nomes das colunas para minúsculas, sem espaços.
+#    - Converte as colunas de metadados para texto.
+# -----------------------------------------------------------------------------
+ler_uma_planilha <- function(sheet_id, sheet_label) {
+  df <- tryCatch(
+    {
+      read_sheet(sheet_id)
+    },
+    error = function(e) {
+      stop(paste0("Erro ao ler a planilha '", sheet_label, "': ", e$message))
+    }
+  )
+  
+  # Converte nomes das colunas para minúsculas e remove espaços extras
+  nomes_corrigidos <- str_trim(tolower(names(df)))
+  names(df) <- nomes_corrigidos
+  
+  # Converte colunas de metadados para character, se existirem
+  df <- df %>% mutate(across(any_of(colunas_metadados), as.character))
+  
+  return(df)
+}
+
+# -----------------------------------------------------------------------------
+# 4) Função para carregar todos os dados (simplificada)
+#    - Lê cada planilha e converte as colunas de notas (terminadas em _primeirobi, etc.)
+#      para numeric.
+#    - Empilha os dados de todas as planilhas e transforma os dados wide para long,
+#      mantendo todas as colunas originais.
+# -----------------------------------------------------------------------------
+carregar_dados <- function() {
+  # Lê as planilhas; imap() percorre cada elemento da lista, passando o valor e o nome
+  lista_dfs <- purrr::imap(sheet_ids, ler_uma_planilha)
+  
+  # Converte colunas de notas para numeric
+  lista_dfs <- lapply(lista_dfs, function(df) {
+    df %>%
+      mutate(across(
+        matches("_(primeirobi|segundobi|terceirobi|quartobi)$"),
+        ~ suppressWarnings(as.numeric(.))
+      ))
+  })
+  
+  # Empilha todos os dataframes em um único dataset, adicionando a coluna "FonteTurma"
+  dados_unidos <- bind_rows(lista_dfs, .id = "FonteTurma")
+  
+  # Transforma as colunas de bimestres de wide para long
+  dados_final <- dados_unidos %>%
+    pivot_longer(
+      cols = matches("_(primeirobi|segundobi|terceirobi|quartobi)$"),
+      names_to = c("Atividade", "BimestreBruto"),
+      names_pattern = "^(.*)_(primeirobi|segundobi|terceirobi|quartobi)$",
+      values_to = "Valor"
+    ) %>%
+    mutate(
+      Bimestre = case_when(
+        BimestreBruto == "primeirobi"  ~ "1º Bimestre",
+        BimestreBruto == "segundobi"   ~ "2º Bimestre",
+        BimestreBruto == "terceirobi"  ~ "3º Bimestre",
+        BimestreBruto == "quartobi"    ~ "4º Bimestre",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    select(-BimestreBruto)
+  
+  message("=== Colunas finais do dataframe unificado ===")
+  message(paste(names(dados_final), collapse = ", "))
+  
+  return(dados_final)
+}
+
+# -----------------------------------------------------------------------------
+# 5) Cria um objeto reativo para armazenar os dados unificados
+# -----------------------------------------------------------------------------
+dados <- reactiveVal()
+
+# -----------------------------------------------------------------------------
+# 6) Carrega os dados automaticamente ao iniciar a aplicação (somente uma vez)
+# -----------------------------------------------------------------------------
+observeEvent(TRUE, {
+  dados(carregar_dados())
+}, once = TRUE)
+
+# -----------------------------------------------------------------------------
+# 7) Atualiza os dados ao clicar no botão "Atualizar Dados"
+# -----------------------------------------------------------------------------
+observeEvent(input$atualizar, {
+  showModal(modalDialog(
+    title = "Atualizando Dados",
+    div(
+      class = "text-center",
+      tags$div(
+        class = "spinner-border text-primary", 
+        role  = "status",
+        tags$span(class = "visually-hidden", "Carregando...")
+      ),
+      p("Aguarde enquanto os dados são atualizados.")
+    ),
+    footer = NULL,
+    easyClose = FALSE
+  ))
+  
+  tryCatch({
+    dados(carregar_dados())
+  }, error = function(e) {
+    showModal(modalDialog(
+      title = "Erro ao Atualizar",
+      p(e$message),
+      easyClose = TRUE,
+      footer = NULL
+    ))
+  })
+  
+  removeModal()
+})
+
+# -----------------------------------------------------------------------------
+# 8) Observers para atualizar as listas de seleção (Turma, Aluno e Atividade)
+# -----------------------------------------------------------------------------
+
+# 8.1) Atualiza as opções de Turma para os painéis Agregado e Individual
+observe({
+  df <- req(dados())
+  
+  if (!"turma" %in% names(df)) {
+    showNotification("A coluna 'turma' não foi encontrada!", type = "warning")
+    updateSelectInput(session, "turma_agregado", choices = "Todas", selected = "Todas")
+    updateSelectInput(session, "turma_individual", choices = "Todas", selected = "Todas")
+    return()
+  }
+  
+  lista_turmas <- sort(unique(df$turma))
+  lista_turmas <- if(length(lista_turmas) == 0) "Todas" else c("Todas", lista_turmas)
+  
+  updateSelectInput(session, "turma_agregado", choices = lista_turmas, selected = "Todas")
+  updateSelectInput(session, "turma_individual", choices = lista_turmas, selected = "Todas")
+})
+
+# 8.2) Atualiza a lista de Alunos conforme a Turma selecionada no painel Individual
+observe({
+  df <- req(dados())
+  
+  if ("turma" %in% names(df) && input$turma_individual != "Todas") {
+    df <- df %>% filter(turma == input$turma_individual)
+  }
+  
+  if (!"nome_estudante" %in% names(df)) {
+    showNotification("A coluna 'nome_estudante' não existe!", type = "warning")
+    updateSelectInput(session, "nome_estudante", choices = "Nenhum", selected = "Nenhum")
+    return()
+  }
+  
+  lista_alunos <- sort(unique(df$nome_estudante))
+  lista_alunos <- if(length(lista_alunos) == 0) "Nenhum" else lista_alunos
+  
+  updateSelectInput(session, "nome_estudante", choices = lista_alunos, selected = lista_alunos[1])
+})
+
+# 8.3) Atualiza a lista de Atividades (conforme definido no pivot_longer)
+observe({
+  df <- req(dados())
+  
+  if (!"Atividade" %in% names(df)) {
+    showNotification("A coluna 'Atividade' não foi detectada!", type = "warning")
+    updateSelectInput(session, "atividade_agregado", choices = "Todos", selected = "Todos")
+    updateSelectInput(session, "atividade_individual", choices = "Todos", selected = "Todos")
+    return()
+  }
+  
+  lista_atividades <- sort(unique(df$Atividade))
+  lista_atividades <- if(length(lista_atividades) == 0) "Nenhuma" else lista_atividades
+  
+  updateSelectInput(session, "atividade_agregado", choices = c("Todos", lista_atividades), selected = "Todos")
+  updateSelectInput(session, "atividade_individual", choices = c("Todos", lista_atividades), selected = "Todos")
+})
+
+# -----------------------------------------------------------------------------
+# 9) Saídas: Tabelas e Gráficos
+# -----------------------------------------------------------------------------
+
+# 9.1) Tabela Agregada: Resumo por Bimestre (com opção de agrupamento por característica)
+output$tabela_agregado <- DT::renderDT({
+  df <- req(dados())
+  
+  # Aplica os filtros de Turma e Atividade, se selecionados
+  if ("turma" %in% names(df) && input$turma_agregado != "Todas") {
+    df <- df %>% filter(turma == input$turma_agregado)
+  }
+  if ("Atividade" %in% names(df) && input$atividade_agregado != "Todos") {
+    df <- df %>% filter(Atividade == input$atividade_agregado)
+  }
+  
+  if (nrow(df) == 0) {
+    return(datatable(data.frame(Mensagem = "Sem dados para exibir.")))
+  }
+  
+  # Considera somente valores numéricos
+  df <- df %>% filter(is.finite(Valor))
+  
+  # Verifica se foi escolhida uma característica para agrupar (semelhante à lógica dos gráficos)
+  if (input$criterio_color == "Nenhum" || !(input$criterio_color %in% names(df))) {
+    df_resumo <- df %>%
+      group_by(Bimestre) %>%
+      summarise(ValorMedio = mean(Valor, na.rm = TRUE), .groups = "drop")
+  } else {
+    var_color <- rlang::sym(input$criterio_color)
+    df_resumo <- df %>%
+      group_by(Bimestre, !!var_color) %>%
+      summarise(ValorMedio = mean(Valor, na.rm = TRUE), .groups = "drop")
+  }
+  
+  datatable(df_resumo)
+})
+
+
+# 9.2) Gráfico Agregado: Boxplot por Bimestre com opção de colorir
+output$grafico_agregado <- renderPlot({
+  df <- req(dados())
+  
+  if ("turma" %in% names(df) && input$turma_agregado != "Todas") {
+    df <- df %>% filter(turma == input$turma_agregado)
+  }
+  if ("Atividade" %in% names(df) && input$atividade_agregado != "Todos") {
+    df <- df %>% filter(Atividade == input$atividade_agregado)
+  }
+  
+  df <- df %>% filter(is.finite(Valor))
+  req(nrow(df) > 0)
+  
+  if (input$criterio_color == "Nenhum" || !(input$criterio_color %in% names(df))) {
+    ggplot(df, aes(x = Bimestre, y = Valor)) +
+      geom_boxplot() +
+      labs(
+        title = "Distribuição de Valores por Bimestre (Boxplot)",
+        x = "Bimestre",
+        y = "Valor"
+      )
+  } else {
+    var_color <- rlang::sym(input$criterio_color)
+    ggplot(df, aes(x = Bimestre, y = Valor, fill = factor(!!var_color))) +
+      geom_boxplot() +
+      labs(
+        title = paste("Boxplot por Bimestre e por", input$criterio_color),
+        x = "Bimestre",
+        y = "Valor",
+        fill = input$criterio_color
+      )
+  }
+})
+
+# 9.3) Gráfico Agregado Temporal: Evolução da Média por Bimestre com opção de colorir
+output$grafico_agregado_tempo <- renderPlot({
+  df <- req(dados())
+  
+  if ("turma" %in% names(df) && input$turma_agregado != "Todas") {
+    df <- df %>% filter(turma == input$turma_agregado)
+  }
+  if ("Atividade" %in% names(df) && input$atividade_agregado != "Todos") {
+    df <- df %>% filter(Atividade == input$atividade_agregado)
+  }
+  
+  df <- df %>% filter(is.finite(Valor))
+  req(nrow(df) > 0)
+  
+  if (input$criterio_color == "Nenhum" || !(input$criterio_color %in% names(df))) {
+    df_linhas <- df %>%
+      group_by(Bimestre) %>%
+      summarise(Media = mean(Valor, na.rm = TRUE), .groups = "drop")
+    
+    ggplot(df_linhas, aes(x = Bimestre, y = Media, group = 1)) +
+      geom_line() +
+      geom_point() +
+      labs(
+        title = "Evolução da Média por Bimestre",
+        x = "Bimestre",
+        y = "Média"
+      )
+  } else {
+    var_color <- rlang::sym(input$criterio_color)
+    
+    df_linhas <- df %>%
+      group_by(Bimestre, !!var_color) %>%
+      summarise(Media = mean(Valor, na.rm = TRUE), .groups = "drop")
+    
+    ggplot(df_linhas, aes(
+      x = Bimestre,
+      y = Media,
+      color = factor(!!var_color),
+      group = factor(!!var_color)
+    )) +
+      geom_line() +
+      geom_point() +
+      labs(
+        title = paste("Evolução da Média por Bimestre e por", input$criterio_color),
+        x = "Bimestre",
+        y = "Média",
+        color = input$criterio_color
+      )
+  }
+})
+
+# 9.4) Tabela Agregada por Grupo: Média agregada por grupo escolhido (característica)
+output$tabela_agregado_grupo <- DT::renderDT({
+  df <- req(dados())
+  
+  # Aplica os mesmos filtros de turma e atividade do painel Agregado
+  if ("turma" %in% names(df) && input$turma_agregado != "Todas") {
+    df <- df %>% filter(turma == input$turma_agregado)
+  }
+  if ("Atividade" %in% names(df) && input$atividade_agregado != "Todos") {
+    df <- df %>% filter(Atividade == input$atividade_agregado)
+  }
+  
+  df <- df %>% filter(is.finite(Valor))
+  
+  # Se nenhum critério de cor foi selecionado, exibe mensagem
+  if (input$criterio_color == "Nenhum" || !(input$criterio_color %in% names(df))) {
+    return(datatable(data.frame(Mensagem = "Nenhuma característica selecionada para agrupar.")))
+  }
+  
+  var_color <- rlang::sym(input$criterio_color)
+  df_resumo <- df %>%
+    group_by(Bimestre, !!var_color) %>%
+    summarise(Media = mean(Valor, na.rm = TRUE), .groups = "drop")
+  
+  datatable(df_resumo)
+})
+
+# 9.5) Gráfico Individual: Barras para Notas/Valores do Aluno
+output$grafico_individual <- renderPlot({
+  df <- req(dados())
+  
+  if ("turma" %in% names(df) && input$turma_individual != "Todas") {
+    df <- df %>% filter(turma == input$turma_individual)
+  }
+  
+  if (!"nome_estudante" %in% names(df)) {
+    showNotification("A coluna 'nome_estudante' não existe no dataframe!", type = "error")
+    return(invisible(NULL))
+  }
+  
+  df <- df %>% filter(nome_estudante == input$nome_estudante)
+  
+  if ("Atividade" %in% names(df) && input$atividade_individual != "Todos") {
+    df <- df %>% filter(Atividade == input$atividade_individual)
+  }
+  
+  df <- df %>% filter(is.finite(Valor))
+  req(nrow(df) > 0)
+  
+  ggplot(df, aes(x = Atividade, y = Valor)) +
+    geom_col() +
+    labs(
+      title = paste("Notas / Valores de", input$nome_estudante),
+      x = "Atividade",
+      y = "Valor"
+    )
+})
+
+# 9.6) Gráfico Individual: Evolução das Notas (média por Bimestre)
+output$grafico_individual_linhas <- renderPlot({
+  df <- req(dados())
+  
+  if ("turma" %in% names(df) && input$turma_individual != "Todas") {
+    df <- df %>% filter(turma == input$turma_individual)
+  }
+  
+  if (!"nome_estudante" %in% names(df)) {
+    showNotification("A coluna 'nome_estudante' não existe no dataframe!", type = "error")
+    return(invisible(NULL))
+  }
+  
+  df <- df %>% filter(nome_estudante == input$nome_estudante)
+  
+  if ("Atividade" %in% names(df) && input$atividade_individual != "Todos") {
+    df <- df %>% filter(Atividade == input$atividade_individual)
+  }
+  
+  df <- df %>% filter(is.finite(Valor))
+  req(nrow(df) > 0)
+  
+  df_evolucao <- df %>%
+    group_by(Bimestre) %>%
+    summarise(MediaBim = mean(Valor, na.rm = TRUE), .groups = "drop")
+  
+  ggplot(df_evolucao, aes(x = Bimestre, y = MediaBim, group = 1)) +
+    geom_line() +
+    geom_point() +
+    labs(
+      title = paste("Evolução das Notas -", input$nome_estudante),
+      x = "Bimestre",
+      y = "Média das Notas"
+    )
+})
+
+# 9.7) Tabela Individual: Dados filtrados do aluno
+output$tabela_individual <- DT::renderDT({
+  df <- req(dados())
+  
+  if ("turma" %in% names(df) && input$turma_individual != "Todas") {
+    df <- df %>% filter(turma == input$turma_individual)
+  }
+  
+  if (!"nome_estudante" %in% names(df)) {
+    return(datatable(data.frame(Mensagem = "A coluna 'nome_estudante' não existe.")))
+  }
+  
+  df <- df %>% filter(nome_estudante == input$nome_estudante)
+  
+  if ("Atividade" %in% names(df) && input$atividade_individual != "Todos") {
+    df <- df %>% filter(Atividade == input$atividade_individual)
+  }
+  
+  if (nrow(df) == 0) {
+    return(datatable(data.frame(Mensagem = "Sem dados para exibir.")))
+  }
+  
+  datatable(df)
+})
+
+
+```
+
+# Agregado
+```{r ui-agregado}
+# Seções de saída do Painel "Agregado"
+DTOutput("tabela_agregado")
+plotOutput("grafico_agregado")
+plotOutput("grafico_agregado_tempo")
+```
+# Individual
+
+```{r ui-individual}
+# Seções de saída do Painel "Individual"
+plotOutput("grafico_individual")
+plotOutput("grafico_individual_linhas")
+DTOutput("tabela_individual")
+```
+
