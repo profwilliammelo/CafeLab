@@ -1,14 +1,21 @@
 ---
-title: "CAfe.Lab - Monitoramento de Desempenho Escolar"
-author: "Dr. William Melo"
-badges: ["`beta`"]
+title: "CAfe.Lab - para Analisar & Acolher"
+author: "Dr. William Melo | `versao 1`"
 format:
   dashboard:
     theme:
       - united
       - custom.scss
-    logo: "images/logo.png"  # Ajuste o caminho, se necessário
-    nav-buttons: [linkedin, twitter, github]
+    logo: "images/logo.png"
+    nav-buttons:
+      - icon: linkedin
+        href: "https://www.linkedin.com/in/williamcorreademelo/"
+      - icon: twitter
+        href: "https://twitter.com/williamcorrearj"
+      - icon: github
+        href: "https://github.com/profwilliammelo"
+      - icon: instagram
+        href: "https://instagram.com/profwilliammelo"
     scrolling: true
     orientation: rows
 server: shiny
@@ -784,6 +791,33 @@ output$regressao_refinada <- renderUI({
 
 
 
+# 10) Tabela: Base Completa
+output$base_completa <- DT::renderDT({
+  req(dados())  # Garante que dados() já foi carregado
+  
+  df <- dados()  # Pega todo o dataframe unificado
+  
+  datatable(
+    df,
+    extensions = 'Buttons',
+    options = list(
+      dom = 'Bfrtip',
+      buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+      pageLength = 100,
+      lengthMenu = c(5, 10, 25, 50, 100),
+      autoWidth = TRUE,
+      language = list(
+        search = "Pesquisar:",
+        lengthMenu = "Mostrar _MENU_ registros",
+        info = "Mostrando _START_ até _END_ de _TOTAL_ registros",
+        infoEmpty = "Mostrando 0 até 0 de 0 registros",
+        infoFiltered = "(filtrado de _MAX_ registros)",
+        paginate = list(previous = "Anterior", `next` = "Próximo")
+      )
+    ),
+    filter = 'top'   # se quiser filtros de coluna no topo
+  )
+})
 
 
 
@@ -949,4 +983,80 @@ DTOutput("estudantes_atencao")
 
 ```
 
+# Base completa
 
+```{r ui-base-completa}
+
+DTOutput("base_completa")
+
+```
+
+# Guia de Uso do Painel
+
+O **CAfe.Lab - para Analisar & Acolher** foi criado para analisar e acompanhar, de forma dinâmica e interativa, as notas, presenças e outras informações de estudantes. Abaixo, você encontra instruções sobre como navegar nas principais seções do painel e tirar proveito de todas as funcionalidades.
+
+---
+
+## Seções Principais
+
+1. Análise Agregada
+
+- **Objetivo**: Mostrar estatísticas (tabelas e gráficos) das notas e valores (presença, quizz, etc.) em nível **agregado**, isto é, sem diferenciar alunos individualmente.
+- **Como usar**:
+  1. **Turma**: Selecione a turma no campo “Selecione a Turma (Agregado)” ou escolha “Todas” para incluir todas as turmas.
+  2. **Indicador (Agregado)**: Escolha qual variável/indicador deseja analisar (ex.: “AV1 - Nota Final”, “AV2 - Nota Final”), ou “Todos” para incluir todas as opções.
+  3. **Desagregar por (característica social)**: Permite colorir ou segmentar os dados por variáveis como gênero, cor ou lugar tranquilo de estudo.  
+  4. **Tabelas e Gráficos**:
+     - **Tabela Agregada**: Exibe a média de cada variável por bimestre (com possibilidade de segmentação).
+     - **Gráfico Agregado**: Mostra o boxplot da distribuição de valores.
+     - **Gráfico Agregado Temporal**: Apresenta a evolução da média por bimestre em colunas, podendo ser colorida por características sociais.
+
+2. Análise Individual
+
+- **Objetivo**: Focar em um único aluno.
+- **Como usar**:
+  1. **Selecione a Turma (Individual)**: Limite a pesquisa a uma turma específica ou mantenha “Todas”.
+  2. **Selecione o Aluno**: Escolha o aluno na lista gerada (filtrada pela turma anterior).
+  3. **Selecione o Indicador (Individual)**: Defina qual atividade/indicador analisar, ou escolha “Todos” para ver tudo.
+  4. **Saídas**:
+     - **Tabela de Notas**: Lista as notas do aluno em cada bimestre e indicador, com opção de filtros e download.
+     - **Gráfico Individual**: Gera colunas por bimestre para o indicador selecionado.
+     - **Tabela Individual**: Mostra todas as linhas do aluno (por bimestre e atividade), com detalhes sobre cada variável.
+
+3. Análises Refinadas
+
+- **Objetivo**: Rodar regressões lineares ou hierárquicas para investigar relações entre variáveis sociais e as notas (por Quizz).
+- **Como usar**:
+  1. **Selecione a Turma**: “Todas” (para regressão com efeito aleatório de turma) ou uma turma específica (modelo linear simples).
+  2. **Selecione o Bimestre**: Por exemplo, 1º, 2º, 3º ou 4º Bimestre.
+  3. Clique em **Atualizar Dados** caso queira recarregar as informações.
+  4. **Resultados**: Exibirá a tabela com coeficientes, erros-padrão e níveis de significância do modelo.
+
+4. Estudantes em Atenção
+
+- **Objetivo**: Mostrar alunos que estão abaixo de determinados patamares em AV2 ou AV3.
+- **Como usar**:
+  1. **Selecione o Bimestre**: Defina “1º Bimestre”, “2º Bimestre”, e assim por diante, ou “Todos” para ter uma visão geral.
+  2. Clique em **Atualizar Dados** para ter certeza de carregar a informação mais recente.
+  3. **Tabela**: Lista os estudantes que se encontram em atenção conforme o critério (por exemplo, AV2 < 3 ou AV3 < 5) e se fizeram o quizz.
+
+---
+
+## Dicas de Uso
+
+Dicas de uso
+
+1. **Atualizar Dados**: Caso os dados no Google Sheets sejam modificados ou queira garantir o refresh, clique em **“Atualizar Dados”** (na aba “Agregado” ou “Individual”).
+2. **Personalizar**:
+   - **Desagregar por**: Útil para analisar como as notas variam entre diferentes grupos (ex. gênero, cor).
+   - **Escolher Bimestre**: Indispensável para focar em um período específico e evitar confusão com dados de outro bimestre.
+
+---
+
+## Conclusão
+
+Portanto...
+
+O **CAfe.Lab - para Analisar & Acolher** disponibiliza diversas abas para facilitar a **análise de notas, presença e demais indicadores** em vários níveis – bimestre, turma, aluno e características sociais. Explore “Agregado”, “Individual”, “Estudantes em Atenção” e “Análises Refinadas” para obter insights valiosos sobre o desempenho escolar.
+
+**Dúvidas adicionais?** Consulte este guia ou entre em contato por WhatsApp: **21936189048**. Boas análises!

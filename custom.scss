@@ -243,3 +243,16 @@ button {
     }
   }
 }
+
+/* Força o texto em destaque (inline code) a ficar visível quando usado no título/autoria */
+.quarto-title-authors code,
+.quarto-title-banner code,
+code {
+  color: $black !important;           /* texto preto */
+  background-color: $gray-100 !important; /* fundo levemente cinza */
+  padding: 2px 4px;                  /* espaçamento suave */
+  border-radius: 4px;                /* cantos arredondados */
+}
+
+/* Exemplo: se quiser mudar especificamente a cor do inline code para outro tom, pode trocar .background-color e .color */
+
