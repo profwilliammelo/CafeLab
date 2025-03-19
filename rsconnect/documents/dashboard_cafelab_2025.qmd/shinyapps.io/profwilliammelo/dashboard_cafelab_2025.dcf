@@ -5,11 +5,10 @@ account: profwilliammelo
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 14254579
-bundleId: 9965471
+bundleId: 9970833
 url: https://profwilliammelo.shinyapps.io/dashboard_cafelab_2025/
 version: 1
 quarto_version: 1.5.57
 quarto_engines: knitr
 asMultiple: FALSE
 asStatic: FALSE
-ignoredFiles: conexao_planilhas.R
